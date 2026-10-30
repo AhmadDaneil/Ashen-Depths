@@ -9,7 +9,7 @@ class DungeonApp extends StatelessWidget {
   const DungeonApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'Dungeon Ascendant',
+        title: 'Ashen Depths',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           brightness: Brightness.dark,

@@ -1,12 +1,9 @@
-import 'dart:async';
-import 'dart:convert';
-
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../game/dungeon_scene.dart';
 import '../models/game_models.dart';
+import '../state/game_state.dart';
 
 const gold = Color(0xFFFFC857);
 const panel = Color(0xFF1B202D);
@@ -19,179 +16,177 @@ class DungeonHome extends StatefulWidget {
 
 class _DungeonHomeState extends State<DungeonHome> with WidgetsBindingObserver {
   final scene = DungeonScene();
-  SharedPreferences? prefs;
-  Timer? timer;
-  int floor = 1, best = 1, coins = 0, kills = 0, level = 1;
-  int hp = 100,
-      maxHp = 100,
-      damage = 12,
-      foeHp = 30,
-      foeMaxHp = 30,
-      foeDamage = 5;
-  int weapon = 0, armor = 0, potions = 0;
-  bool boss = false, loading = true;
-  String foe = 'Cave Slime',
-      note = 'Your adventure begins in the Ashen Catacombs.';
-  DateTime savedAt = DateTime.now();
+  final gameState = GameState();
+  bool loading = true;
+  int _lastVisualSequence = 0;
+
+  int get floor => gameState.floor;
+  int get best => gameState.bestFloor;
+  int get coins => gameState.coins;
+  int get kills => gameState.kills;
+  int get level => gameState.level;
+  int get hp => gameState.hp;
+  int get maxHp => gameState.maxHp;
+  int get damage => gameState.damage;
+  int get foeHp => gameState.foeHp;
+  int get foeMaxHp => gameState.foeMaxHp;
+  int get foeDamage => gameState.foeDamage;
+  int get weapon => gameState.weaponRank;
+  int get armor => gameState.armorRank;
+  int get potions => gameState.potions;
+  int get roomIndex => gameState.roomIndex;
+  int get bladeCost => gameState.bladeCost;
+  int get armorCost => gameState.armorCost;
+  bool get boss => gameState.boss;
+  String get foe => gameState.foe;
+  String get note => gameState.note;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    gameState.addListener(_onGameStateChanged);
     _load();
   }
 
   Future<void> _load() async {
-    prefs = await SharedPreferences.getInstance();
-    final raw = prefs!.getString('save');
-    if (raw != null) {
-      final d = jsonDecode(raw) as Map<String, dynamic>;
-      floor = d['floor'] ?? 1;
-      best = d['best'] ?? floor;
-      coins = d['coins'] ?? 0;
-      kills = d['kills'] ?? 0;
-      level = d['level'] ?? 1;
-      hp = d['hp'] ?? 100;
-      maxHp = d['maxHp'] ?? 100;
-      damage = d['damage'] ?? 12;
-      weapon = d['weapon'] ?? 0;
-      armor = d['armor'] ?? 0;
-      potions = d['potions'] ?? 0;
-      final then = DateTime.tryParse(d['time'] ?? '');
-      if (then != null) {
-        final seconds =
-            DateTime.now().difference(then).inSeconds.clamp(0, 28800);
-        final reward = (seconds * (1 + floor * .35)).floor();
-        coins += reward;
-        if (reward > 0)
-          note = 'Your hero earned ' + reward.toString() + ' gold while away.';
+    await gameState.initialize();
+    if (!mounted) return;
+    scene.setFloor(DungeonFloor.fromNumber(floor));
+    scene.setRoom(roomIndex);
+    _lastVisualSequence = gameState.visualSequence;
+    setState(() => loading = false);
+  }
+
+  void _onGameStateChanged() {
+    if (!mounted) return;
+    scene.setFloor(DungeonFloor.fromNumber(floor));
+    scene.setRoom(roomIndex);
+    if (gameState.visualSequence != _lastVisualSequence) {
+      _lastVisualSequence = gameState.visualSequence;
+      switch (gameState.visualAction) {
+        case 'walk':
+          scene.walkToRoom(roomIndex);
+        case 'strike':
+          scene.strike(damage);
+          if (gameState.incomingDamage > 0) {
+            scene.enemyStrike(gameState.incomingDamage);
+          }
+        case 'loot':
+          scene.walkToRoom(roomIndex);
+          scene.showLoot();
+        case 'recover':
+          scene.recoverAtEntrance();
       }
     }
-    _spawn();
-    if (mounted) setState(() => loading = false);
-    timer = Timer.periodic(const Duration(milliseconds: 1100), (_) => _tick());
-    _save();
+    setState(() {});
   }
 
-  void _spawn() {
-    final mapFloor = DungeonFloor.fromNumber(floor);
-    boss = mapFloor.boss;
-    foe = mapFloor.enemyName;
-    foeMaxHp = mapFloor.enemyHealth;
-    foeHp = foeMaxHp;
-    foeDamage = mapFloor.enemyAttack;
-    scene.setFloor(mapFloor);
-  }
-
-  void _tick() {
-    if (!mounted || loading) return;
-    scene.strike(damage);
-    setState(() {
-      foeHp -= damage;
-      if (foeHp <= 0) {
-        final reward = boss ? 70 + floor * 8 : 12 + floor * 3;
-        coins += reward;
-        kills++;
-        note = (boss ? 'Guardian defeated!' : foe + ' defeated.') +
-            '  +' +
-            reward.toString() +
-            ' gold.';
-        if (boss) potions++;
-        floor++;
-        if (floor > best) best = floor;
-        if (kills % 4 == 0) {
-          level++;
-          damage += 2;
-          maxHp += 12;
-          hp = maxHp;
-          note = 'Level up! You are now level ' + level.toString() + '.';
-        }
-        _spawn();
-      } else {
-        hp -= foeDamage;
-        if (hp <= 0) {
-          hp = maxHp;
-          floor = floor > 1 ? floor - 1 : 1;
-          _spawn();
-          note = 'You were knocked out and recovered at floor ' +
-              floor.toString() +
-              '.';
-        }
-      }
-    });
-    if (DateTime.now().difference(savedAt).inSeconds > 8) _save();
-  }
-
-  Future<void> _save() async {
-    if (prefs == null) return;
-    savedAt = DateTime.now();
-    await prefs!.setString(
-      'save',
-      jsonEncode({
-        'floor': floor,
-        'best': best,
-        'coins': coins,
-        'kills': kills,
-        'level': level,
-        'hp': hp,
-        'maxHp': maxHp,
-        'damage': damage,
-        'weapon': weapon,
-        'armor': armor,
-        'potions': potions,
-        'time': savedAt.toIso8601String(),
-      }),
-    );
-  }
+  void _blade() => gameState.buyWeaponUpgrade();
+  void _armor() => gameState.buyArmorUpgrade();
+  void _potion() => gameState.drinkPotion();
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) _save();
-  }
-
-  int get bladeCost => 45 + weapon * 55;
-  int get armorCost => 40 + armor * 50;
-  void _blade() {
-    if (coins < bladeCost) return;
-    setState(() {
-      coins -= bladeCost;
-      weapon++;
-      damage += 5;
-      note = 'Blade upgraded to rank ' + weapon.toString() + '.';
-    });
-    _save();
-  }
-
-  void _armor() {
-    if (coins < armorCost) return;
-    setState(() {
-      coins -= armorCost;
-      armor++;
-      maxHp += 25;
-      hp = (hp + 25).clamp(0, maxHp).toInt();
-      note = 'Armor upgraded to rank ' + armor.toString() + '.';
-    });
-    _save();
-  }
-
-  void _potion() {
-    if (potions == 0 || hp == maxHp) return;
-    setState(() {
-      potions--;
-      hp = (hp + (maxHp * .55).round()).clamp(0, maxHp).toInt();
-      note = 'A potion restored your strength.';
-    });
-    _save();
+        state == AppLifecycleState.detached) {
+      gameState.save();
+    }
   }
 
   @override
   void dispose() {
-    timer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    _save();
+    gameState.removeListener(_onGameStateChanged);
+    gameState.dispose();
     super.dispose();
   }
+
+  Widget _route() => _card(
+        Row(
+          children: List.generate(gameState.map.rooms.length, (index) {
+            final active = index == roomIndex;
+            final room = gameState.map.rooms[index];
+            final icon = switch (room.kind) {
+              RoomKind.entrance => Icons.door_front_door,
+              RoomKind.battle => Icons.sports_martial_arts,
+              RoomKind.treasure => Icons.workspace_premium,
+            };
+            return Expanded(
+              child: Column(children: [
+                Icon(icon, color: active ? gold : Colors.white38, size: 22),
+                const SizedBox(height: 5),
+                Text(room.name,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: active ? gold : Colors.white54,
+                        fontSize: 10,
+                        fontWeight:
+                            active ? FontWeight.bold : FontWeight.normal)),
+              ]),
+            );
+          }),
+        ),
+      );
+
+  Widget _equipment() => _card(
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('EQUIPPED GEAR',
+              style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.2,
+                  fontSize: 12)),
+          const SizedBox(height: 10),
+          Text(
+              '⚔  ' +
+                  (gameState.equippedWeapon?.name ?? 'Starter Blade') +
+                  '  ·  rank ' +
+                  weapon.toString(),
+              style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          const SizedBox(height: 5),
+          Text(
+              '🛡  ' +
+                  (gameState.equippedArmor?.name ?? 'Traveler Armor') +
+                  '  ·  rank ' +
+                  armor.toString(),
+              style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          if (gameState.inventory.isNotEmpty) ...[
+            const Divider(height: 20),
+            Text(
+                'PACK  ·  ' +
+                    gameState.inventory.map((item) => item.name).join('  •  '),
+                style: const TextStyle(color: gold, fontSize: 11)),
+          ],
+        ]),
+      );
+
+  Widget _lootBanner() => AnimatedSwitcher(
+        duration: const Duration(milliseconds: 300),
+        child: Container(
+          key: ValueKey<String>(gameState.lootNotice),
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
+          decoration: BoxDecoration(
+            color: gold.withOpacity(.13),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: gold.withOpacity(.3)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.auto_awesome, color: gold, size: 18),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                'LOOT FOUND  ·  ' + gameState.lootNotice,
+                style: const TextStyle(
+                  color: gold,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: .5,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ]),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -215,7 +210,12 @@ class _DungeonHomeState extends State<DungeonHome> with WidgetsBindingObserver {
                       const SizedBox(height: 14),
                       _battle(),
                       const SizedBox(height: 14),
+                      if (gameState.lootNotice.isNotEmpty) _lootBanner(),
+                      _route(),
+                      const SizedBox(height: 14),
                       _upgrades(),
+                      const SizedBox(height: 14),
+                      _equipment(),
                       const SizedBox(height: 14),
                       _journal(),
                     ],
@@ -248,7 +248,7 @@ class _DungeonHomeState extends State<DungeonHome> with WidgetsBindingObserver {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'DUNGEON',
+                    'THE ASHEN',
                     style: TextStyle(
                       letterSpacing: 3,
                       fontSize: 11,
@@ -257,7 +257,7 @@ class _DungeonHomeState extends State<DungeonHome> with WidgetsBindingObserver {
                     ),
                   ),
                   Text(
-                    'ASCENDANT',
+                    'DEPTHS',
                     style: TextStyle(
                       letterSpacing: 1.6,
                       fontSize: 19,
@@ -314,7 +314,7 @@ class _DungeonHomeState extends State<DungeonHome> with WidgetsBindingObserver {
                         ),
                       ),
                       Text(
-                        'LVL ' + level.toString(),
+                        'LVL ' + gameState.hero.level.toString(),
                         style: const TextStyle(
                           color: gold,
                           fontWeight: FontWeight.bold,
@@ -381,7 +381,7 @@ class _DungeonHomeState extends State<DungeonHome> with WidgetsBindingObserver {
             ClipRRect(
               borderRadius: BorderRadius.circular(16),
               child: SizedBox(
-                height: 218,
+                height: 260,
                 width: double.infinity,
                 child: Stack(
                   fit: StackFit.expand,
@@ -408,7 +408,9 @@ class _DungeonHomeState extends State<DungeonHome> with WidgetsBindingObserver {
                       top: 12,
                       child: _pill(
                         Icons.auto_awesome,
-                        'ASHEN CATACOMBS',
+                        gameState.map.name.toUpperCase() +
+                            '  ·  ' +
+                            gameState.currentRoom.name.toUpperCase(),
                         const Color(0xFF9AE8D2),
                       ),
                     ),

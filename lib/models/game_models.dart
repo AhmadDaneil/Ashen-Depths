@@ -1,15 +1,21 @@
+enum RoomKind { entrance, battle, treasure }
+
 class HeroModel {
   const HeroModel({
     required this.level,
     required this.health,
     required this.maxHealth,
     required this.attack,
+    required this.weaponRank,
+    required this.armorRank,
   });
+  final int level, health, maxHealth, attack, weaponRank, armorRank;
+}
 
-  final int level;
-  final int health;
-  final int maxHealth;
-  final int attack;
+class DungeonRoom {
+  const DungeonRoom({required this.name, required this.kind});
+  final String name;
+  final RoomKind kind;
 }
 
 class DungeonFloor {
@@ -21,13 +27,9 @@ class DungeonFloor {
     required this.boss,
     required this.goldReward,
   });
-
-  final int number;
+  final int number, enemyHealth, enemyAttack, goldReward;
   final String enemyName;
-  final int enemyHealth;
-  final int enemyAttack;
   final bool boss;
-  final int goldReward;
 
   factory DungeonFloor.fromNumber(int floor) {
     const enemies = [
@@ -53,13 +55,49 @@ class DungeonMap {
   const DungeonMap({
     required this.name,
     required this.backgroundAsset,
+    required this.rooms,
   });
-
-  final String name;
-  final String backgroundAsset;
+  final String name, backgroundAsset;
+  final List<DungeonRoom> rooms;
 
   static const ashenCatacombs = DungeonMap(
     name: 'Ashen Catacombs',
     backgroundAsset: 'ashen-catacombs.png',
+    rooms: [
+      DungeonRoom(name: 'The Gate', kind: RoomKind.entrance),
+      DungeonRoom(name: 'Slime Den', kind: RoomKind.battle),
+      DungeonRoom(name: 'Treasure Niche', kind: RoomKind.treasure),
+    ],
   );
+}
+
+enum GearSlot { weapon, armor }
+
+class LootItem {
+  const LootItem({
+    required this.name,
+    required this.slot,
+    required this.rank,
+    required this.bonus,
+  });
+  final String name;
+  final GearSlot slot;
+  final int rank, bonus;
+
+  Map<String, Object> toJson() => {
+        'name': name,
+        'slot': slot.name,
+        'rank': rank,
+        'bonus': bonus,
+      };
+
+  factory LootItem.fromJson(Map<String, dynamic> json) => LootItem(
+        name: json['name'] as String? ?? 'Worn gear',
+        slot: GearSlot.values.firstWhere(
+          (slot) => slot.name == json['slot'],
+          orElse: () => GearSlot.weapon,
+        ),
+        rank: json['rank'] as int? ?? 0,
+        bonus: json['bonus'] as int? ?? 0,
+      );
 }
